@@ -1,0 +1,84 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WebServer.h>
+
+// ---------- WiFi ----------
+const char* ssid = "Galaxy A73";
+const char* password = "engkodisit";
+
+// ---------- ESP32-CAM IP ----------
+const char* camSnapURL = "http://192.168.228.7/snap";
+WebServer server(80);
+
+// ---------- PIN ----------
+#define PIR_PIN     13
+#define BUTTON_PIN  32
+#define BUZZER_PIN  25
+
+bool motionDetected = false;
+unsigned long lastTriggerTime = 0;
+const unsigned long pirDelay = 60000;  // 1 menit dalam milidetik (60.000 ms)
+
+// ---------- Kirim Permintaan Snap ke ESP32-CAM ----------
+void triggerSnap() {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(camSnapURL);
+    int httpCode = http.GET();
+    if (httpCode > 0) {
+      Serial.println("📸 Permintaan snap terkirim!");
+    }
+    // Jika gagal, tidak perlu tampilkan pesan error
+    http.end();
+    delay(5000);  // Beri waktu agar proses selesai
+  } else {
+    Serial.println("📴 WiFi tidak tersedia");
+  }
+}
+
+// ---------- Setup ----------
+void setup() {
+  Serial.begin(115200);
+  pinMode(PIR_PIN, INPUT);
+  pinMode(BUTTON_PIN, INPUT_PULLDOWN);
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500); Serial.print(".");
+  }
+  Serial.println("\n✅ Terhubung ke WiFi");
+  Serial.println("📡 IP ESP Dev Kit: " + WiFi.localIP().toString());
+
+  server.begin();
+}
+
+// ---------- Loop ----------
+void loop() {
+  server.handleClient();
+
+  bool pirValue = digitalRead(PIR_PIN);
+  bool buttonState = digitalRead(BUTTON_PIN);
+  unsigned long currentMillis = millis();
+
+  if (pirValue == HIGH && !motionDetected) {
+    if (currentMillis - lastTriggerTime >= pirDelay) {
+      motionDetected = true;
+      lastTriggerTime = currentMillis;
+      Serial.println("🔍 Gerakan terdeteksi! Kirim perintah ke ESP32-CAM");
+      triggerSnap();
+    }
+  }
+
+  if (pirValue == LOW) {
+    motionDetected = false;
+  }
+
+  if (buttonState == HIGH) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    // triggerSnap();  // opsional
+    delay(1000);
+  } else {
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+}
