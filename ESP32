@@ -1,25 +1,52 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WebServer.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <WiFiClientSecure.h>
+#include <UniversalTelegramBot.h>
 
 // ---------- WiFi ----------
 const char* ssid = "Galaxy A73";
 const char* password = "engkodisit";
 
-// ---------- ESP32-CAM IP ----------
+// ---------- Telegram ----------
+String BOT_TOKEN = "7725490830:AAHuYXAdTjlK1s53H-p5Ih4mAzvvZRTo6yg";
+String CHAT_ID = "6586488639";
+WiFiClientSecure secured_client;
+UniversalTelegramBot bot(BOT_TOKEN, secured_client);
+unsigned long lastTelegramCheck = 0;
+
+// ---------- ESP32-CAM ----------
 const char* camSnapURL = "http://192.168.228.7/snap";
+
+// ---------- Web Server ----------
 WebServer server(80);
 
 // ---------- PIN ----------
-#define PIR_PIN     13
+#define PIR_PIN     33
 #define BUTTON_PIN  32
 #define BUZZER_PIN  25
 
-bool motionDetected = false;
-unsigned long lastTriggerTime = 0;
-const unsigned long pirDelay = 60000;  // 1 menit dalam milidetik (60.000 ms)
+// ---------- LCD I2C 16x2 ----------
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // 16 karakter x 2 baris
 
-// ---------- Kirim Permintaan Snap ke ESP32-CAM ----------
+// ---------- STATE ----------
+bool motionDetected = false;
+bool isWelcomeShown = false;
+unsigned long lastTriggerTime = 0;
+const unsigned long pirDelay = 60000;
+
+enum Mode { NORMAL, DND };
+Mode currentMode = NORMAL;
+
+// ---------- Scroll Variables for DND ----------
+String dndScrollText = "Pemilik rumah sedang tidur / tidak di rumah ";
+int scrollIndex = 0;
+unsigned long lastScrollTime = 0;
+const unsigned long scrollDelay = 300;
+
+// ---------- Fungsi Kirim ke ESP32-CAM ----------
 void triggerSnap() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
@@ -28,11 +55,73 @@ void triggerSnap() {
     if (httpCode > 0) {
       Serial.println("📸 Permintaan snap terkirim!");
     }
-    // Jika gagal, tidak perlu tampilkan pesan error
     http.end();
-    delay(5000);  // Beri waktu agar proses selesai
+    delay(5000);
   } else {
     Serial.println("📴 WiFi tidak tersedia");
+  }
+}
+
+// ---------- Mode DND ----------
+void updateLCD_DND() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("DND Mode Aktif");
+  isWelcomeShown = false;
+  scrollIndex = 0;
+}
+
+// ---------- Mode Normal: Tampilkan WELCOME penuh di 2 baris ----------
+void updateWelcome() {
+  if (!isWelcomeShown && currentMode == NORMAL) {
+    lcd.clear();
+    lcd.setCursor(1, 0);  // Tengah baris pertama
+    lcd.print("SELAMAT DATANG");
+    lcd.setCursor(0, 1);  // Baris kedua penuh garis
+    lcd.print("================");
+    isWelcomeShown = true;
+  }
+}
+
+// ---------- Cek Telegram ----------
+void handleTelegram() {
+  int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+
+  while (numNewMessages) {
+    for (int i = 0; i < numNewMessages; i++) {
+      String text = bot.messages[i].text;
+      String chat_id = bot.messages[i].chat_id;
+
+      if (text == "/start") {
+        String message = "Pilih mode:\n/normal - Mode Normal\n/dnd - Do Not Disturb";
+        bot.sendMessage(chat_id, message, "");
+      } else if (text == "/normal") {
+        currentMode = NORMAL;
+        bot.sendMessage(chat_id, "✅ Mode Normal aktif", "");
+        updateWelcome();
+      } else if (text == "/dnd") {
+        currentMode = DND;
+        bot.sendMessage(chat_id, "🔕 Mode DND aktif", "");
+        updateLCD_DND();
+      }
+    }
+    numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+  }
+}
+
+// ---------- Scroll Text di Baris 2 Saat DND ----------
+void scrollDNDText() {
+  if (currentMode != DND) return;
+
+  if (millis() - lastScrollTime >= scrollDelay) {
+    lastScrollTime = millis();
+    String segment = dndScrollText.substring(scrollIndex, scrollIndex + 16); // 16 kolom
+    lcd.setCursor(0, 1); // baris kedua
+    lcd.print(segment);
+    scrollIndex++;
+    if (scrollIndex > dndScrollText.length() - 16) {
+      scrollIndex = 0;
+    }
   }
 }
 
@@ -43,9 +132,16 @@ void setup() {
   pinMode(BUTTON_PIN, INPUT_PULLDOWN);
   pinMode(BUZZER_PIN, OUTPUT);
 
+  Wire.begin(21, 22); // SDA, SCL ESP32
+  lcd.init();
+  lcd.backlight();
+  updateWelcome();
+
   WiFi.begin(ssid, password);
+  secured_client.setInsecure();
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500); Serial.print(".");
+    delay(500);
+    Serial.print(".");
   }
   Serial.println("\n✅ Terhubung ke WiFi");
   Serial.println("📡 IP ESP Dev Kit: " + WiFi.localIP().toString());
@@ -57,9 +153,9 @@ void setup() {
 void loop() {
   server.handleClient();
 
+  unsigned long currentMillis = millis();
   bool pirValue = digitalRead(PIR_PIN);
   bool buttonState = digitalRead(BUTTON_PIN);
-  unsigned long currentMillis = millis();
 
   if (pirValue == HIGH && !motionDetected) {
     if (currentMillis - lastTriggerTime >= pirDelay) {
@@ -75,10 +171,27 @@ void loop() {
   }
 
   if (buttonState == HIGH) {
-    digitalWrite(BUZZER_PIN, HIGH);
-    // triggerSnap();  // opsional
-    delay(1000);
+    if (currentMode == NORMAL) {
+      digitalWrite(BUZZER_PIN, HIGH);
+      delay(1000);
+    } else {
+      digitalWrite(BUZZER_PIN, LOW);
+      Serial.println("🔕 DND Mode: Tidak bunyi");
+    }
   } else {
     digitalWrite(BUZZER_PIN, LOW);
+  }
+
+  if (currentMode == NORMAL) {
+    updateWelcome();
+  }
+
+  if (millis() - lastTelegramCheck > 2000) {
+    handleTelegram();
+    lastTelegramCheck = millis();
+  }
+
+  if (currentMode == DND) {
+    scrollDNDText();
   }
 }
