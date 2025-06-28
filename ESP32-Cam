@@ -1,0 +1,143 @@
+#include <WiFi.h>
+#include "esp_camera.h"
+#include <WiFiClientSecure.h>
+#include <UniversalTelegramBot.h>
+#include <WebServer.h>
+
+// ---------- WiFi ----------
+const char* ssid = "Galaxy A73";
+const char* password = "engkodisit";
+
+// ---------- Telegram ----------
+String BOT_TOKEN = "7725490830:AAHuYXAdTjlK1s53H-p5Ih4mAzvvZRTo6yg";
+String CHAT_ID   = "6586488639";
+
+WiFiClientSecure secured_client;
+UniversalTelegramBot bot(BOT_TOKEN, secured_client);
+WebServer server(80);
+
+// ---------- Kamera ----------
+void configCamera() {
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = 5;
+  config.pin_d1 = 18;
+  config.pin_d2 = 19;
+  config.pin_d3 = 21;
+  config.pin_d4 = 36;
+  config.pin_d5 = 39;
+  config.pin_d6 = 34;
+  config.pin_d7 = 35;
+  config.pin_xclk = 0;
+  config.pin_pclk = 22;
+  config.pin_vsync = 25;
+  config.pin_href = 23;
+  config.pin_sscb_sda = 26;
+  config.pin_sscb_scl = 27;
+  config.pin_pwdn = 32;
+  config.pin_reset = -1;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+
+  if (psramFound()) {
+    config.frame_size = FRAMESIZE_QVGA; // 320x240
+    config.jpeg_quality = 10;
+    config.fb_count = 2;
+  } else {
+    config.frame_size = FRAMESIZE_QVGA;
+    config.jpeg_quality = 12;
+    config.fb_count = 1;
+  }
+
+  if (esp_camera_init(&config) != ESP_OK) {
+    Serial.println("❌ Kamera gagal diinisialisasi");
+  } else {
+    Serial.println("✅ Kamera siap");
+  }
+}
+
+// ---------- Kirim ke Telegram ----------
+void sendToTelegram(camera_fb_t* fb) {
+  secured_client.setInsecure();
+
+  if (!secured_client.connect("api.telegram.org", 443)) {
+    Serial.println("❌ Gagal konek ke Telegram");
+    return;
+  }
+
+  String boundary = "----WebKitFormBoundary";
+  String head = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n" + CHAT_ID + "\r\n";
+  head += "--" + boundary + "\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"photo.jpg\"\r\n";
+  head += "Content-Type: image/jpeg\r\n\r\n";
+  String tail = "\r\n--" + boundary + "--\r\n";
+  int contentLength = head.length() + fb->len + tail.length();
+
+  secured_client.println("POST /bot" + BOT_TOKEN + "/sendPhoto HTTP/1.1");
+  secured_client.println("Host: api.telegram.org");
+  secured_client.println("Content-Length: " + String(contentLength));
+  secured_client.println("Content-Type: multipart/form-data; boundary=" + boundary);
+  secured_client.println();
+  secured_client.print(head);
+  secured_client.write(fb->buf, fb->len);
+  secured_client.print(tail);
+  delay(100);
+  secured_client.stop();
+
+  Serial.println("📤 Gambar dikirim ke Telegram");
+  Serial.print("📉 Heap: "); Serial.println(ESP.getFreeHeap());
+  Serial.print("📉 PSRAM: "); Serial.println(ESP.getFreePsram());
+}
+
+// ---------- Handle SNAP ----------
+void handleSnap() {
+  camera_fb_t * fb = esp_camera_fb_get();
+
+  if (!fb) {
+    Serial.println("❌ Gagal ambil gambar");
+    server.send(500, "text/plain", "Gagal ambil gambar");
+    return;
+  }
+
+  sendToTelegram(fb);
+  esp_camera_fb_return(fb);
+  server.send(200, "text/plain", "📷 Foto dikirim ke Telegram");
+}
+
+// ---------- WiFi Watchdog ----------
+void checkWiFi() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("📴 WiFi terputus, reconnect...");
+    WiFi.disconnect();
+    WiFi.begin(ssid, password);
+    int retry = 0;
+    while (WiFi.status() != WL_CONNECTED && retry < 20) {
+      delay(500); Serial.print(".");
+      retry++;
+    }
+    Serial.println(WiFi.status() == WL_CONNECTED ? "\n✅ Reconnected!" : "\n❌ Gagal reconnect");
+  }
+}
+
+// ---------- Setup ----------
+void setup() {
+  Serial.begin(115200);
+  configCamera();
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500); Serial.print(".");
+  }
+  Serial.println("\n✅ Terhubung ke WiFi");
+  Serial.println("📡 IP ESP32-CAM: " + WiFi.localIP().toString());
+
+  server.on("/snap", HTTP_GET, handleSnap);
+  server.begin();
+  Serial.println("🌐 Endpoint aktif: /snap");
+}
+
+// ---------- Loop ----------
+void loop() {
+  server.handleClient();
+  checkWiFi();
+}
