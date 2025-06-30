@@ -4,11 +4,11 @@
 #include <UniversalTelegramBot.h>
 #include <WebServer.h>
 
-// ---------- WiFi ----------
+// ------------------- WiFi -------------------
 const char* ssid = "Galaxy A73";
 const char* password = "engkodisit";
 
-// ---------- Telegram ----------
+// ------------------- Telegram -------------------
 String BOT_TOKEN = "7725490830:AAHuYXAdTjlK1s53H-p5Ih4mAzvvZRTo6yg";
 String CHAT_ID   = "6586488639";
 
@@ -16,7 +16,7 @@ WiFiClientSecure secured_client;
 UniversalTelegramBot bot(BOT_TOKEN, secured_client);
 WebServer server(80);
 
-// ---------- Kamera ----------
+// ------------------- Konfigurasi Kamera -------------------
 void configCamera() {
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -43,7 +43,7 @@ void configCamera() {
   if (psramFound()) {
     config.frame_size = FRAMESIZE_QVGA; // 320x240
     config.jpeg_quality = 10;
-    config.fb_count = 2;
+    config.fb_count = 1;
   } else {
     config.frame_size = FRAMESIZE_QVGA;
     config.jpeg_quality = 12;
@@ -57,7 +57,7 @@ void configCamera() {
   }
 }
 
-// ---------- Kirim ke Telegram ----------
+// ------------------- Kirim ke Telegram -------------------
 void sendToTelegram(camera_fb_t* fb) {
   secured_client.setInsecure();
 
@@ -85,12 +85,16 @@ void sendToTelegram(camera_fb_t* fb) {
   secured_client.stop();
 
   Serial.println("📤 Gambar dikirim ke Telegram");
-  Serial.print("📉 Heap: "); Serial.println(ESP.getFreeHeap());
-  Serial.print("📉 PSRAM: "); Serial.println(ESP.getFreePsram());
 }
 
-// ---------- Handle SNAP ----------
+// ------------------- Handler SNAP -------------------
 void handleSnap() {
+  // Flush dummy frame (buang frame lama)
+  for (int i = 0; i < 3; i++) {
+    camera_fb_t* tmp = esp_camera_fb_get();
+    if (tmp) esp_camera_fb_return(tmp);
+  }
+
   camera_fb_t * fb = esp_camera_fb_get();
 
   if (!fb) {
@@ -99,12 +103,18 @@ void handleSnap() {
     return;
   }
 
+  // Kirim ke Telegram
   sendToTelegram(fb);
+
+  // Kirim respon ke peminta (ESP DevKit / browser)
+  server.sendHeader("Content-Type", "image/jpeg");
+  server.sendHeader("Content-Disposition", "inline; filename=capture.jpg");
+  server.send_P(200, "image/jpeg", (char*)fb->buf, fb->len);
+
   esp_camera_fb_return(fb);
-  server.send(200, "text/plain", "📷 Foto dikirim ke Telegram");
 }
 
-// ---------- WiFi Watchdog ----------
+// ------------------- Watchdog WiFi -------------------
 void checkWiFi() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("📴 WiFi terputus, reconnect...");
@@ -119,24 +129,29 @@ void checkWiFi() {
   }
 }
 
-// ---------- Setup ----------
+// ------------------- Setup -------------------
 void setup() {
   Serial.begin(115200);
+  delay(1000);
+
   configCamera();
 
   WiFi.begin(ssid, password);
+  Serial.print("🔌 Menghubungkan WiFi");
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500); Serial.print(".");
+    delay(500);
+    Serial.print(".");
   }
   Serial.println("\n✅ Terhubung ke WiFi");
-  Serial.println("📡 IP ESP32-CAM: " + WiFi.localIP().toString());
+  Serial.print("📡 IP ESP32-CAM: ");
+  Serial.println(WiFi.localIP());
 
   server.on("/snap", HTTP_GET, handleSnap);
   server.begin();
-  Serial.println("🌐 Endpoint aktif: /snap");
+  Serial.println("🌐 Endpoint aktif: http://[IP]/snap");
 }
 
-// ---------- Loop ----------
+// ------------------- Loop -------------------
 void loop() {
   server.handleClient();
   checkWiFi();
