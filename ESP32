@@ -18,13 +18,13 @@ UniversalTelegramBot bot(BOT_TOKEN, secured_client);
 unsigned long lastTelegramCheck = 0;
 
 // ---------- ESP32-CAM ----------
-const char* camSnapURL = "http://192.168.228.7/snap";
+const char* camSnapURL = "http://192.168.151.7/snap";
 
 // ---------- Web Server ----------
 WebServer server(80);
 
 // ---------- PIN ----------
-#define PIR_PIN     33
+#define PIR_PIN     13
 #define BUTTON_PIN  32
 #define BUZZER_PIN  25
 
