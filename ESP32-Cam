@@ -3,20 +3,49 @@
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
 #include <WebServer.h>
+#include <time.h>
 
-// ------------------- WiFi -------------------
-const char* ssid = "Galaxy A73";
-const char* password = "engkodisit";
+// ---------- Multi WiFi ----------
+const char* ssidList[] = {"Galaxy A73", "Wifiumah"};
+const char* passList[] = {"engkodisit", "kiwil2403"};
+const int wifiCount = 2;
 
-// ------------------- Telegram -------------------
+// ---------- Telegram ----------
 String BOT_TOKEN = "7725490830:AAHuYXAdTjlK1s53H-p5Ih4mAzvvZRTo6yg";
-String CHAT_ID   = "6586488639";
-
+String CHAT_ID = "6586488639";
 WiFiClientSecure secured_client;
 UniversalTelegramBot bot(BOT_TOKEN, secured_client);
 WebServer server(80);
 
-// ------------------- Konfigurasi Kamera -------------------
+// ---------- Flash LED ----------
+#define FLASH_LED_PIN 4
+
+// ---------- NTP ----------
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 7 * 3600;
+const int daylightOffset_sec = 0;
+
+void connectToWiFi() {
+  WiFi.mode(WIFI_STA);
+  for (int i = 0; i < wifiCount; i++) {
+    WiFi.begin(ssidList[i], passList[i]);
+    Serial.print("🔌 Menghubungkan ke WiFi: ");
+    Serial.println(ssidList[i]);
+    int retry = 0;
+    while (WiFi.status() != WL_CONNECTED && retry < 20) {
+      delay(500); Serial.print(".");
+      retry++;
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\n✅ Terhubung ke WiFi!");
+      Serial.println(WiFi.localIP());
+      return;
+    }
+    WiFi.disconnect();
+  }
+  Serial.println("❌ Tidak bisa terhubung ke WiFi manapun");
+}
+
 void configCamera() {
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -39,9 +68,8 @@ void configCamera() {
   config.pin_reset = -1;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-
   if (psramFound()) {
-    config.frame_size = FRAMESIZE_QVGA; // 320x240
+    config.frame_size = FRAMESIZE_QVGA;
     config.jpeg_quality = 10;
     config.fb_count = 1;
   } else {
@@ -49,7 +77,6 @@ void configCamera() {
     config.jpeg_quality = 12;
     config.fb_count = 1;
   }
-
   if (esp_camera_init(&config) != ESP_OK) {
     Serial.println("❌ Kamera gagal diinisialisasi");
   } else {
@@ -57,10 +84,8 @@ void configCamera() {
   }
 }
 
-// ------------------- Kirim ke Telegram -------------------
 void sendToTelegram(camera_fb_t* fb) {
   secured_client.setInsecure();
-
   if (!secured_client.connect("api.telegram.org", 443)) {
     Serial.println("❌ Gagal konek ke Telegram");
     return;
@@ -83,75 +108,60 @@ void sendToTelegram(camera_fb_t* fb) {
   secured_client.print(tail);
   delay(100);
   secured_client.stop();
-
   Serial.println("📤 Gambar dikirim ke Telegram");
 }
 
-// ------------------- Handler SNAP -------------------
 void handleSnap() {
-  // Flush dummy frame (buang frame lama)
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("❌ Gagal ambil waktu dari NTP");
+  }
+
+  int currentHour = timeinfo.tm_hour;
+  bool isNight = (currentHour >= 18 || currentHour < 7);
+  if (isNight) {
+    digitalWrite(FLASH_LED_PIN, HIGH);
+    delay(100);
+  }
+
   for (int i = 0; i < 3; i++) {
     camera_fb_t* tmp = esp_camera_fb_get();
     if (tmp) esp_camera_fb_return(tmp);
   }
 
   camera_fb_t * fb = esp_camera_fb_get();
+  if (isNight) digitalWrite(FLASH_LED_PIN, LOW);
 
   if (!fb) {
-    Serial.println("❌ Gagal ambil gambar");
     server.send(500, "text/plain", "Gagal ambil gambar");
     return;
   }
 
-  // Kirim ke Telegram
   sendToTelegram(fb);
-
-  // Kirim respon ke peminta (ESP DevKit / browser)
   server.sendHeader("Content-Type", "image/jpeg");
   server.sendHeader("Content-Disposition", "inline; filename=capture.jpg");
   server.send_P(200, "image/jpeg", (char*)fb->buf, fb->len);
-
   esp_camera_fb_return(fb);
 }
 
-// ------------------- Watchdog WiFi -------------------
 void checkWiFi() {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("📴 WiFi terputus, reconnect...");
-    WiFi.disconnect();
-    WiFi.begin(ssid, password);
-    int retry = 0;
-    while (WiFi.status() != WL_CONNECTED && retry < 20) {
-      delay(500); Serial.print(".");
-      retry++;
-    }
-    Serial.println(WiFi.status() == WL_CONNECTED ? "\n✅ Reconnected!" : "\n❌ Gagal reconnect");
+    connectToWiFi();
   }
 }
 
-// ------------------- Setup -------------------
 void setup() {
   Serial.begin(115200);
-  delay(1000);
-
+  pinMode(FLASH_LED_PIN, OUTPUT);
+  digitalWrite(FLASH_LED_PIN, LOW);
   configCamera();
-
-  WiFi.begin(ssid, password);
-  Serial.print("🔌 Menghubungkan WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\n✅ Terhubung ke WiFi");
-  Serial.print("📡 IP ESP32-CAM: ");
-  Serial.println(WiFi.localIP());
-
+  connectToWiFi();
+  secured_client.setInsecure();
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   server.on("/snap", HTTP_GET, handleSnap);
   server.begin();
-  Serial.println("🌐 Endpoint aktif: http://[IP]/snap");
 }
 
-// ------------------- Loop -------------------
 void loop() {
   server.handleClient();
   checkWiFi();
