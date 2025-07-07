@@ -7,9 +7,9 @@
 #include <UniversalTelegramBot.h>
 
 // ---------- Multi WiFi ----------
-const char* ssidList[] = {"Galaxy A73","Wifiumah"};
-const char* passList[] = {"engkodisit","kiwil2403"};
-const int wifiCount = 2;
+const char* ssidList[] = {"Galaxy A73","Samsung","POCO X3 Pro"};
+const char* passList[] = {"engkodisit","tidakada","123456789"};
+const int wifiCount = 3;
 
 // ---------- Telegram ----------
 String BOT_TOKEN = "7725490830:AAHuYXAdTjlK1s53H-p5Ih4mAzvvZRTo6yg";
@@ -21,7 +21,9 @@ unsigned long lastTelegramCheck = 0;
 // ---------- ESP32-CAM (multi IP) ----------
 const char* camSnapURLList[] = {
   "http://192.168.1.21/snap",
-  "http://10.51.207.7/snap"
+  "http://10.51.207.7/snap",
+  "http://192.168.141.7/snap",
+  "http://192.168.15.7/snap"
 };
 const int camSnapCount = sizeof(camSnapURLList) / sizeof(camSnapURLList[0]);
 
