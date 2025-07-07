@@ -7,8 +7,8 @@
 #include <UniversalTelegramBot.h>
 
 // ---------- Multi WiFi ----------
-const char* ssidList[] = {"Galaxy A73", "Wifiumah"};
-const char* passList[] = {"engkodisit", "kiwil2403"};
+const char* ssidList[] = {"Galaxy A73","Wifiumah"};
+const char* passList[] = {"engkodisit","kiwil2403"};
 const int wifiCount = 2;
 
 // ---------- Telegram ----------
@@ -18,8 +18,12 @@ WiFiClientSecure secured_client;
 UniversalTelegramBot bot(BOT_TOKEN, secured_client);
 unsigned long lastTelegramCheck = 0;
 
-// ---------- ESP32-CAM ----------
-const char* camSnapURL = "http://192.168.1.21/snap";
+// ---------- ESP32-CAM (multi IP) ----------
+const char* camSnapURLList[] = {
+  "http://192.168.1.21/snap",
+  "http://10.51.207.7/snap"
+};
+const int camSnapCount = sizeof(camSnapURLList) / sizeof(camSnapURLList[0]);
 
 // ---------- Web Server ----------
 WebServer server(80);
@@ -69,13 +73,32 @@ void connectToWiFi() {
   Serial.println("❌ Tidak bisa terhubung ke WiFi manapun");
 }
 
+void checkWiFiReconnect() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("📴 WiFi terputus. Mencoba reconnect...");
+    connectToWiFi();
+  }
+}
+
 void triggerSnap() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    http.begin(camSnapURL);
-    int httpCode = http.GET();
-    if (httpCode > 0) Serial.println("📸 Snap trigger sent!");
-    http.end();
+    bool success = false;
+    for (int i = 0; i < camSnapCount; i++) {
+      Serial.println("🌐 Mencoba akses: " + String(camSnapURLList[i]));
+      http.begin(camSnapURLList[i]);
+      int httpCode = http.GET();
+      if (httpCode == 200) {
+        Serial.println("📸 Snap trigger sent!");
+        success = true;
+        http.end();
+        break;
+      } else {
+        Serial.println("❌ Gagal akses: " + String(camSnapURLList[i]));
+        http.end();
+      }
+    }
+    if (!success) Serial.println("⚠️ Semua IP gagal diakses");
     delay(5000);
   } else {
     Serial.println("📴 WiFi tidak tersedia");
@@ -151,6 +174,7 @@ void setup() {
 }
 
 void loop() {
+  checkWiFiReconnect();
   server.handleClient();
   unsigned long currentMillis = millis();
   bool pirValue = digitalRead(PIR_PIN);
