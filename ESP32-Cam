@@ -6,8 +6,8 @@
 #include <time.h>
 
 // ---------- Multi WiFi ----------
-const char* ssidList[] = {"Galaxy A73", "Wifiumah"};
-const char* passList[] = {"engkodisit", "kiwil2403"};
+const char* ssidList[] = {"Galaxy A73","Wifiumah"};
+const char* passList[] = {"engkodisit","kiwil2403"};
 const int wifiCount = 2;
 
 // ---------- Telegram ----------
